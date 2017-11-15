@@ -1,23 +1,68 @@
-FROM arm32v7/openjdk:8-jre
+FROM jgraham20/armhf_java:latest
+
 MAINTAINER Jason Graham <jgraham20@gmail.com>
 
 ARG MIRROR=http://apache.mirrors.pair.com
 ARG VERSION=3.4.10
+ARG ZK_DIST=zookeeper-3.4.10
 
-LABEL name="zookeeper" version=$VERSION
+ENV ZK_USER=zookeeper \
+    ZK_DATA_DIR=/var/lib/zookeeper/data \
+    ZK_DATA_LOG_DIR=/var/lib/zookeeper/log \
+    ZK_LOG_DIR=/var/log/zookeeper \
+    JAVA_HOME=/opt/java/jdk1.8.0_152/jre
 
-RUN apt-get install -y wget bash \
-    && mkdir -p /opt/zookeeper \
-    && wget -q -O - $MIRROR/zookeeper/zookeeper-$VERSION/zookeeper-$VERSION.tar.gz \
-      | tar -xzC /opt/zookeeper --strip-components=1 \
-    && cp /opt/zookeeper/conf/zoo_sample.cfg /opt/zookeeper/conf/zoo.cfg \
-    && mkdir -p /tmp/zookeeper
+ARG GPG_KEY=C823E3E5B12AF29C67F81976F5CECB3CB5E9BD2D
+
+ADD bin/* /usr/local/bin/
+LABEL name="zookeeper" version=$VERSION 
+RUN  set -x \
+    && apt-get update \
+    && apt-get install -y wget netcat-openbsd \
+    && wget -q "http://www.apache.org/dist/zookeeper/$ZK_DIST/$ZK_DIST.tar.gz" \
+    && wget -q "http://www.apache.org/dist/zookeeper/$ZK_DIST/$ZK_DIST.tar.gz.asc" \
+    && export GNUPGHOME="$(mktemp -d)" \
+    && gpg --keyserver ha.pool.sks-keyservers.net --recv-key "$GPG_KEY" \
+    && gpg --batch --verify "$ZK_DIST.tar.gz.asc" "$ZK_DIST.tar.gz" \
+    && tar -xzf "$ZK_DIST.tar.gz" -C /opt \
+    && rm -r "$GNUPGHOME" "$ZK_DIST.tar.gz" "$ZK_DIST.tar.gz.asc" \
+    && ln -s /opt/$ZK_DIST /opt/zookeeper \
+    && mkdir -p /tmp/zookeeper \
+    && rm -rf /opt/zookeeper/CHANGES.txt \
+      /opt/zookeeper/README.txt \
+      /opt/zookeeper/NOTICE.txt \
+      /opt/zookeeper/CHANGES.txt \
+      /opt/zookeeper/README_packaging.txt \
+      /opt/zookeeper/build.xml \
+      /opt/zookeeper/config \
+      /opt/zookeeper/contrib \
+      /opt/zookeeper/dist-maven \
+      /opt/zookeeper/docs \
+      /opt/zookeeper/ivy.xml \
+      /opt/zookeeper/ivysettings.xml \
+      /opt/zookeeper/recipes \
+      /opt/zookeeper/src \
+      /opt/zookeeper/$ZK_DIST.jar.asc \
+      /opt/zookeeper/$ZK_DIST.jar.md5 \
+      /opt/zookeeper/$ZK_DIST.jar.sha1 \
+    && apt-get autoremove -y wget \
+    && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 2181 2888 3888
 
-WORKDIR /opt/zookeeper
+# Copy configuration generator script to bin
+#COPY zkGenConfig.sh zkOk.sh zkMetrics.sh /opt/zookeeper/bin/
+#ADD bin/* /usr/local/bin/
 
-VOLUME ["/opt/zookeeper/conf", "/tmp/zookeeper"]
-
-ENTRYPOINT ["/opt/zookeeper/bin/zkServer.sh"]
-CMD ["start-foreground"]
+# Create a user for the zookeeper process and configure file system ownership
+# for necessary directories and symlink the distribution as a user executable
+RUN set -x \
+    && useradd $ZK_USER \
+    && [ `id -u $ZK_USER` -eq 1000 ] \
+    && [ `id -g $ZK_USER` -eq 1000 ] \
+    && mkdir -p $ZK_DATA_DIR $ZK_DATA_LOG_DIR $ZK_LOG_DIR /usr/share/zookeeper /tmp/zookeeper /usr/etc/ \
+    && chown -R "$ZK_USER:$ZK_USER" /opt/$ZK_DIST $ZK_DATA_DIR $ZK_LOG_DIR $ZK_DATA_LOG_DIR /tmp/zookeeper \
+    && ln -s /opt/zookeeper/conf/ /usr/etc/zookeeper \
+    && ln -s /opt/zookeeper/bin/* /usr/bin \
+    && ln -s /opt/zookeeper/$ZK_DIST.jar /usr/share/zookeeper/ \
+    && ln -s /opt/zookeeper/lib/* /usr/share/zookeeper
